@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GameId {
+  FRULOOP
+  MEMORA
+}
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+}
+
+enum NotificationLocale {
+  EN
+  VI
+  JA
+  KO
+  DE
+  FR
+  IT
+}
+
+model GuestPlayer {
+  // ID & Scope
+  id     String @id @default(uuid())
+  gameId GameId
+
+  // Profile
+  name String?
+
+  // Authentication
+  authTokenHash String @unique
+
+  // Push Notification
+  fcmToken           String?             @unique
+  devicePlatform     DevicePlatform?
+  notificationLocale NotificationLocale?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  // Relations
+  gameResults  GameResult[]
+  leaderboards Leaderboard?
+
+  // Required composite unique so GameResult/Leaderboard can FK (gameId, guestId).
+  @@unique([gameId, id])
+  @@map("guest_players")
+}
+
+model GameResult {
+  // ID & Partition Key
+  id        String   @default(uuid())
+  createdAt DateTime @default(now())
+
+  // Scope
+  gameId  GameId
+  guestId String
+
+  // Client Identity
+  clientResultId String
+
+  // Score
+  score Int
+
+  // Optional Metadata
+  metadata Json?
+  playedAt DateTime?
+
+  // Relations
+  guest GuestPlayer @relation(fields: [gameId, guestId], references: [gameId, id], onDelete: Cascade)
+
+  @@id([id, createdAt])
+  @@index([gameId, guestId, clientResultId])
+  @@index([gameId, guestId])
+  @@index([gameId, createdAt])
+  @@map("game_results")
+}
+
+model Leaderboard {
+  // Primary Key
+  gameId  GameId
+  guestId String
+
+  // Score
+  bestScore Int
+
+  // Timestamps
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  guest GuestPlayer @relation(fields: [gameId, guestId], references: [gameId, id], onDelete: Cascade)
+
+  @@id([gameId, guestId])
+  @@index([gameId, bestScore(sort: Desc)])
+  @@map("leaderboards")
+}

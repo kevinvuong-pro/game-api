@@ -1,0 +1,49 @@
+import { Body, Post, Patch, Delete, Controller, UseGuards } from '@nestjs/common';
+
+import { RATE_LIMITS } from '@/common/constants';
+import { GuestAuthGuard, RateLimitGuard } from '@/common/guards';
+import { Guest, RateLimit, type AuthenticatedGuest } from '@/common/decorators';
+import { UpdateDeviceDto } from '@/features/notifications/dto/update-device.dto';
+import { DeviceTokenService } from '@/features/notifications/device-token.service';
+import { RegisterDeviceDto } from '@/features/notifications/dto/register-device.dto';
+
+@Controller('devices')
+export class DevicesController {
+  constructor(private readonly deviceTokenService: DeviceTokenService) {}
+
+  @Post()
+  @UseGuards(GuestAuthGuard, RateLimitGuard)
+  @RateLimit({
+    windowSeconds: 60,
+    keySource: 'guest',
+    keyPrefix: 'rate:device:',
+    limit: RATE_LIMITS.device,
+  })
+  registerDevice(@Body() dto: RegisterDeviceDto, @Guest() guest: AuthenticatedGuest) {
+    return this.deviceTokenService.registerDevice(guest, dto);
+  }
+
+  @Patch()
+  @UseGuards(GuestAuthGuard, RateLimitGuard)
+  @RateLimit({
+    windowSeconds: 60,
+    keySource: 'guest',
+    keyPrefix: 'rate:device:',
+    limit: RATE_LIMITS.device,
+  })
+  updateDevice(@Body() dto: UpdateDeviceDto, @Guest() guest: AuthenticatedGuest) {
+    return this.deviceTokenService.updateDevice(guest, dto);
+  }
+
+  @Delete()
+  @UseGuards(GuestAuthGuard, RateLimitGuard)
+  @RateLimit({
+    windowSeconds: 60,
+    keySource: 'guest',
+    keyPrefix: 'rate:device:',
+    limit: RATE_LIMITS.device,
+  })
+  unregisterDevice(@Guest() guest: AuthenticatedGuest) {
+    return this.deviceTokenService.unregisterDevice(guest);
+  }
+}

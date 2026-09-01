@@ -1,0 +1,106 @@
+import Redis from 'ioredis';
+import { ConfigService } from '@nestjs/config';
+import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
+
+import { AUTH_TOKEN_CACHE_TTL_SECONDS } from '@/common/constants';
+import type { AuthenticatedGuest } from '@/common/decorators/guest.decorator';
+
+export const REDIS_CLIENT = 'REDIS_CLIENT';
+
+const REDIS_KEYS = {
+  authToken: (tokenHash: string) => `auth:token:${tokenHash}`,
+  rankPushSent: (gameId: string, weekKey: string, guestId: string) =>
+    `rank-push:sent:${gameId}:${weekKey}:${guestId}`,
+} as const;
+
+/** Keep send markers slightly longer than one ISO week so retries cannot re-notify. */
+const RANK_PUSH_SENT_TTL_SECONDS = 8 * 24 * 60 * 60;
+
+@Injectable()
+export class RedisService implements OnModuleDestroy {
+  constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
+
+  async onModuleDestroy() {
+    await this.redis.quit();
+  }
+
+  async ping(): Promise<boolean> {
+    try {
+      return (await this.redis.ping()) === 'PONG';
+    } catch {
+      return false;
+    }
+  }
+
+  async getAuthTokenGuestId(tokenHash: string): Promise<AuthenticatedGuest | null> {
+    const raw = await this.redis.get(REDIS_KEYS.authToken(tokenHash));
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(raw) as AuthenticatedGuest;
+    } catch {
+      return null;
+    }
+  }
+
+  async setAuthTokenGuestId(tokenHash: string, guest: AuthenticatedGuest): Promise<void> {
+    await this.redis.set(
+      REDIS_KEYS.authToken(tokenHash),
+      JSON.stringify(guest),
+      'EX',
+      AUTH_TOKEN_CACHE_TTL_SECONDS,
+    );
+  }
+
+  /** Returns true if this guest has not yet been marked sent for the week (SET NX). */
+  async tryMarkRankPushSent(gameId: string, weekKey: string, guestId: string): Promise<boolean> {
+    const result = await this.redis.set(
+      REDIS_KEYS.rankPushSent(gameId, weekKey, guestId),
+      '1',
+      'EX',
+      RANK_PUSH_SENT_TTL_SECONDS,
+      'NX',
+    );
+    return result === 'OK';
+  }
+
+  async clearRankPushSent(gameId: string, weekKey: string, guestId: string): Promise<void> {
+    await this.redis.del(REDIS_KEYS.rankPushSent(gameId, weekKey, guestId));
+  }
+
+  /**
+   * Atomic fixed-window counter. Also heals keys that lost TTL (INCR without EXPIRE).
+   */
+  async consumeRateLimit(key: string, limit: number, windowSeconds: number): Promise<boolean> {
+    const count = Number(
+      await this.redis.eval(RedisService.RATE_LIMIT_LUA, 1, key, String(windowSeconds)),
+    );
+
+    return count <= limit;
+  }
+
+  private static readonly RATE_LIMIT_LUA = `
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+elseif redis.call('TTL', KEYS[1]) < 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return count
+`;
+}
+
+export function createRedisClient(configService: ConfigService) {
+  const url = configService.get<string>('REDIS_URL');
+  if (!url) {
+    throw new Error('REDIS_URL is not configured');
+  }
+
+  return new Redis(url, {
+    connectTimeout: 5_000,
+    commandTimeout: 3_000,
+    maxRetriesPerRequest: 3,
+  });
+}
