@@ -15,7 +15,11 @@ export const NOTIFICATION_JOB = {
 
 export const RANK_PUSH_BATCH_SIZE = 500;
 export const RANK_PUSH_SEND_CONCURRENCY = 10;
+/** Seconds to block while the queue is empty (BullMQ default is 5). */
+export const RANK_PUSH_DRAIN_DELAY_SECONDS = 15;
 export const RANK_PUSH_LOCK_DURATION_MS = 120_000;
+/** Must stay below lockDuration; default 30s is noisy on idle Redis. */
+export const RANK_PUSH_STALLED_INTERVAL_MS = 60_000;
 
 export const NOTIFICATION_ROUTES = {
   LEADERBOARD: 'Leaderboard',

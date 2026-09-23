@@ -9,6 +9,8 @@ import {
   RANK_PUSH_BATCH_SIZE,
   RANK_PUSH_LOCK_DURATION_MS,
   RANK_PUSH_SEND_CONCURRENCY,
+  RANK_PUSH_DRAIN_DELAY_SECONDS,
+  RANK_PUSH_STALLED_INTERVAL_MS,
 } from '@/common/constants';
 import { RedisService } from '@/infra/redis/redis.service';
 import { FcmService } from '@/features/notifications/fcm.service';
@@ -27,6 +29,8 @@ interface RankPushBatchPayload {
 
 @Processor(NOTIFICATION_QUEUE.RANK_PUSH, {
   lockDuration: RANK_PUSH_LOCK_DURATION_MS,
+  drainDelay: RANK_PUSH_DRAIN_DELAY_SECONDS,
+  stalledInterval: RANK_PUSH_STALLED_INTERVAL_MS,
 })
 export class RankPushProcessor extends WorkerHost {
   private readonly logger = new Logger(RankPushProcessor.name);

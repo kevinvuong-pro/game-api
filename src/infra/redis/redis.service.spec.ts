@@ -29,6 +29,7 @@ describe('createRedisClient', () => {
     const configService = { get: jest.fn().mockReturnValue('redis://localhost:6379') };
     createRedisClient(configService as unknown as ConfigService);
     expect(Redis).toHaveBeenCalledWith('redis://localhost:6379', {
+      keepAlive: 10_000,
       connectTimeout: 5_000,
       commandTimeout: 3_000,
       maxRetriesPerRequest: 3,
@@ -65,6 +66,8 @@ describe('RedisService', () => {
     redis.get.mockResolvedValue(JSON.stringify(guest));
 
     await expect(service.getAuthTokenGuestId('hash')).resolves.toEqual(guest);
+    await expect(service.getAuthTokenGuestId('hash')).resolves.toEqual(guest);
+    expect(redis.get).toHaveBeenCalledTimes(1);
     expect(redis.get).toHaveBeenCalledWith('auth:token:hash');
 
     await service.setAuthTokenGuestId('hash', guest);
@@ -74,6 +77,10 @@ describe('RedisService', () => {
       'EX',
       AUTH_TOKEN_CACHE_TTL_SECONDS,
     );
+
+    redis.get.mockClear();
+    await expect(service.getAuthTokenGuestId('hash')).resolves.toEqual(guest);
+    expect(redis.get).not.toHaveBeenCalled();
   });
 
   it('returns null for missing or corrupt auth cache values', async () => {

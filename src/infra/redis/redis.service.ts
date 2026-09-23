@@ -2,7 +2,10 @@ import Redis from 'ioredis';
 import { ConfigService } from '@nestjs/config';
 import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 
-import { AUTH_TOKEN_CACHE_TTL_SECONDS } from '@/common/constants';
+import {
+  AUTH_TOKEN_CACHE_TTL_SECONDS,
+  AUTH_TOKEN_LOCAL_CACHE_MAX_ENTRIES,
+} from '@/common/constants';
 import type { AuthenticatedGuest } from '@/common/decorators/guest.decorator';
 
 export const REDIS_CLIENT = 'REDIS_CLIENT';
@@ -18,6 +21,8 @@ const RANK_PUSH_SENT_TTL_SECONDS = 8 * 24 * 60 * 60;
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
+  private readonly authMemory = new Map<string, { guest: AuthenticatedGuest; expiresAt: number }>();
+
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
   async onModuleDestroy() {
@@ -33,14 +38,23 @@ export class RedisService implements OnModuleDestroy {
   }
 
   async getAuthTokenGuestId(tokenHash: string): Promise<AuthenticatedGuest | null> {
+    const local = this.authMemory.get(tokenHash);
+    if (local && local.expiresAt > Date.now()) {
+      return local.guest;
+    }
+
     const raw = await this.redis.get(REDIS_KEYS.authToken(tokenHash));
     if (!raw) {
+      this.authMemory.delete(tokenHash);
       return null;
     }
 
     try {
-      return JSON.parse(raw) as AuthenticatedGuest;
+      const guest = JSON.parse(raw) as AuthenticatedGuest;
+      this.rememberAuthToken(tokenHash, guest);
+      return guest;
     } catch {
+      this.authMemory.delete(tokenHash);
       return null;
     }
   }
@@ -52,6 +66,7 @@ export class RedisService implements OnModuleDestroy {
       'EX',
       AUTH_TOKEN_CACHE_TTL_SECONDS,
     );
+    this.rememberAuthToken(tokenHash, guest);
   }
 
   /** Returns true if this guest has not yet been marked sent for the week (SET NX). */
@@ -81,6 +96,25 @@ export class RedisService implements OnModuleDestroy {
     return count <= limit;
   }
 
+  private rememberAuthToken(tokenHash: string, guest: AuthenticatedGuest): void {
+    if (this.authMemory.size >= AUTH_TOKEN_LOCAL_CACHE_MAX_ENTRIES) {
+      const now = Date.now();
+      for (const [key, entry] of this.authMemory) {
+        if (entry.expiresAt <= now) {
+          this.authMemory.delete(key);
+        }
+      }
+      if (this.authMemory.size >= AUTH_TOKEN_LOCAL_CACHE_MAX_ENTRIES) {
+        this.authMemory.clear();
+      }
+    }
+
+    this.authMemory.set(tokenHash, {
+      guest,
+      expiresAt: Date.now() + AUTH_TOKEN_CACHE_TTL_SECONDS * 1000,
+    });
+  }
+
   private static readonly RATE_LIMIT_LUA = `
 local count = redis.call('INCR', KEYS[1])
 if count == 1 then
@@ -99,6 +133,7 @@ export function createRedisClient(configService: ConfigService) {
   }
 
   return new Redis(url, {
+    keepAlive: 10_000,
     connectTimeout: 5_000,
     commandTimeout: 3_000,
     maxRetriesPerRequest: 3,

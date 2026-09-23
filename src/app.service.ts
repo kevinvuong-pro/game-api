@@ -1,24 +1,39 @@
 import { Injectable } from '@nestjs/common';
 
+import { HEALTH_CHECK_CACHE_MS } from '@/common/constants';
 import { RedisService } from '@/infra/redis/redis.service';
 import { PrismaService } from '@/infra/prisma/prisma.service';
 
+type DependencyStatus = 'connected' | 'disconnected';
+
 @Injectable()
 export class AppService {
+  private healthCache: {
+    healthy: boolean;
+    expiresAt: number;
+    services: { db: DependencyStatus; redis: DependencyStatus };
+  } | null = null;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly redisService: RedisService,
   ) {}
 
   async checkHealth() {
-    const [dbStatus, redisStatus] = await Promise.all([this.checkPostgres(), this.checkRedis()]);
+    const now = Date.now();
 
-    const services = {
-      db: dbStatus,
-      redis: redisStatus,
-    };
+    if (!this.healthCache || now >= this.healthCache.expiresAt) {
+      const [dbStatus, redisStatus] = await Promise.all([this.checkPostgres(), this.checkRedis()]);
+      const services = { db: dbStatus, redis: redisStatus };
+      const healthy = dbStatus === 'connected' && redisStatus === 'connected';
+      this.healthCache = {
+        healthy,
+        services,
+        expiresAt: now + HEALTH_CHECK_CACHE_MS,
+      };
+    }
 
-    const healthy = dbStatus === 'connected' && redisStatus === 'connected';
+    const { healthy, services } = this.healthCache;
 
     return {
       healthy,

@@ -15,6 +15,10 @@ describe('AppService', () => {
     );
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('reports ok when Postgres and Redis are connected', async () => {
     prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }]);
     redisService.ping.mockResolvedValue(true);
@@ -56,5 +60,22 @@ describe('AppService', () => {
         services: { db: 'connected', redis: 'disconnected' },
       }),
     );
+  });
+
+  it('reuses a recent health snapshot instead of probing again', async () => {
+    jest.useFakeTimers();
+    prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }]);
+    redisService.ping.mockResolvedValue(true);
+
+    await service.checkHealth();
+    await service.checkHealth();
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(redisService.ping).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(10_001);
+    await service.checkHealth();
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(redisService.ping).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
   });
 });
